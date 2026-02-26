@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.18.0 - 2026-02-26
+
+### New Features
+
+- Add configurable VCS command with Mercurial support (#162) @paskal
+- Add configurable iteration limit for external review phase (#160) @umputun
+- Add max_iterations as config file option
+
+### Fixed
+
+- Fix broken "Available images" anchor link in README
+
 ## v0.17.0 - 2026-02-24
 
 ### New Features
