@@ -140,17 +140,7 @@ func Load(configDir string) (*Config, error) {
 		globalDir = DefaultConfigDir()
 	}
 
-	// auto-detect local config directory in cwd.
-	// os.Getwd() failure is silently ignored - local config is optional,
-	// and the global config will still work correctly.
-	var localDir string
-	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, ".ralphex")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			localDir = candidate
-		}
-	}
-
+	localDir := detectLocalDir(globalDir)
 	return loadWithLocal(globalDir, localDir)
 }
 
@@ -176,16 +166,48 @@ func LoadReadOnly(configDir string) (*Config, error) {
 		globalDir = DefaultConfigDir()
 	}
 
-	// auto-detect local config directory in cwd
-	var localDir string
-	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, ".ralphex")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			localDir = candidate
-		}
+	localDir := detectLocalDir(globalDir)
+	return loadConfigFromDirs(globalDir, localDir)
+}
+
+// detectLocalDir auto-detects .ralphex/ in cwd as local config directory.
+// returns empty string if no local config found, if cwd detection fails, or if the
+// candidate resolves to the same absolute path as globalDir (avoids double-loading
+// the same directory, which happens when --config-dir points to .ralphex/).
+func detectLocalDir(globalDir string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(cwd, ".ralphex")
+	info, err := os.Stat(candidate)
+	if err != nil || !info.IsDir() {
+		return ""
 	}
 
-	return loadConfigFromDirs(globalDir, localDir)
+	// deduplicate: skip if candidate resolves to the same path as globalDir.
+	// resolve to absolute first, then evaluate symlinks (e.g., /var → /private/var on macOS)
+	absGlobal := resolveRealPath(globalDir)
+	absLocal := resolveRealPath(candidate)
+	if absGlobal != "" && absLocal != "" && absGlobal == absLocal {
+		return ""
+	}
+
+	return candidate
+}
+
+// resolveRealPath converts a path to its absolute, symlink-resolved form.
+// returns empty string if absolute path resolution fails.
+func resolveRealPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return abs // fall back to absolute path if symlink resolution fails
+	}
+	return resolved
 }
 
 // loadConfigFromDirs loads configuration from specified directories without installing defaults.
