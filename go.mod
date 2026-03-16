@@ -3,7 +3,7 @@ module github.com/umputun/ralphex
 go 1.26
 
 require (
-	github.com/charmbracelet/glamour v0.10.0
+	github.com/charmbracelet/glamour v1.0.0
 	github.com/fatih/color v1.18.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-pkgz/notify v1.3.0

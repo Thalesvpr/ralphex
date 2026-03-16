@@ -17,8 +17,8 @@ github.com/aymerick/douceur/parser
 # github.com/charmbracelet/colorprofile v0.4.2
 ## explicit; go 1.24.2
 github.com/charmbracelet/colorprofile
-# github.com/charmbracelet/glamour v0.10.0
-## explicit; go 1.23.0
+# github.com/charmbracelet/glamour v1.0.0
+## explicit; go 1.24.0
 github.com/charmbracelet/glamour
 github.com/charmbracelet/glamour/ansi
 github.com/charmbracelet/glamour/internal/autolink
