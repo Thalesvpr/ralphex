@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.24.2 - 2026-03-18
+
+### Fixed
+
+- Kill orphaned child processes on normal exit #227 @umputun
+
 ## v0.24.1 - 2026-03-17
 
 ### Fixed
