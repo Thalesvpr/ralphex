@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TaskStatus represents the execution status of a task.
@@ -35,10 +37,16 @@ type Task struct {
 	Checkboxes []Checkbox `json:"checkboxes"`
 }
 
+// planFrontmatter holds optional YAML frontmatter fields in plan files.
+type planFrontmatter struct {
+	DependsOn []string `yaml:"depends_on"`
+}
+
 // Plan represents a parsed plan file.
 type Plan struct {
-	Title string `json:"title"`
-	Tasks []Task `json:"tasks"`
+	Title     string   `json:"title"`
+	Tasks     []Task   `json:"tasks"`
+	DependsOn []string `json:"depends_on,omitempty"`
 }
 
 // patterns for parsing plan markdown.
@@ -51,13 +59,42 @@ var (
 	formatInText = regexp.MustCompile(`\[\s*[ xX]?\s*\]`)
 )
 
-// ParsePlan parses plan markdown content into a structured Plan.
-func ParsePlan(content string) (*Plan, error) {
-	p := &Plan{
-		Tasks: make([]Task, 0),
+// parsePlanFrontmatter extracts optional YAML frontmatter from plan content.
+// returns parsed frontmatter and the remaining body. if no frontmatter found,
+// returns zero value and original content.
+func parsePlanFrontmatter(content string) (planFrontmatter, string) {
+	after, found := strings.CutPrefix(content, "---\n")
+	if !found {
+		return planFrontmatter{}, content
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(content))
+	header, body, found := strings.Cut(after, "\n---")
+	if !found {
+		return planFrontmatter{}, content
+	}
+	// closing delimiter must be on its own line
+	if body != "" && body[0] != '\n' {
+		return planFrontmatter{}, content
+	}
+
+	var fm planFrontmatter
+	if err := yaml.Unmarshal([]byte(header), &fm); err != nil {
+		return planFrontmatter{}, content // malformed YAML → treat as no frontmatter
+	}
+
+	return fm, strings.TrimSpace(body)
+}
+
+// ParsePlan parses plan markdown content into a structured Plan.
+func ParsePlan(content string) (*Plan, error) {
+	fm, body := parsePlanFrontmatter(content)
+
+	p := &Plan{
+		Tasks:     make([]Task, 0),
+		DependsOn: fm.DependsOn,
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(body))
 	var currentTask *Task
 
 	for scanner.Scan() {

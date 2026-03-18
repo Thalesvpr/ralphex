@@ -466,3 +466,55 @@ func TestTaskStatus_Constants(t *testing.T) {
 	assert.Equal(t, plan.TaskStatusDone, plan.TaskStatus("done"))
 	assert.Equal(t, plan.TaskStatusFailed, plan.TaskStatus("failed"))
 }
+
+func TestParsePlan_Frontmatter(t *testing.T) {
+	t.Run("parses depends_on from frontmatter", func(t *testing.T) {
+		content := "---\ndepends_on:\n  - 01-first\n  - 02-second\n---\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"01-first", "02-second"}, p.DependsOn)
+		assert.Equal(t, "Plan", p.Title)
+		require.Len(t, p.Tasks, 1)
+	})
+
+	t.Run("no frontmatter returns nil DependsOn", func(t *testing.T) {
+		content := "# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Nil(t, p.DependsOn)
+	})
+
+	t.Run("malformed frontmatter treated as no frontmatter", func(t *testing.T) {
+		content := "---\n: invalid yaml [\n---\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Nil(t, p.DependsOn)
+		// title parsed from original content (frontmatter delimiters become part of content)
+	})
+
+	t.Run("empty depends_on returns nil", func(t *testing.T) {
+		content := "---\ndepends_on: []\n---\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Empty(t, p.DependsOn)
+	})
+
+	t.Run("frontmatter with unclosed delimiter", func(t *testing.T) {
+		content := "---\ndepends_on:\n  - first\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Nil(t, p.DependsOn) // no closing ---
+	})
+
+	t.Run("ParsePlanFile with frontmatter", func(t *testing.T) {
+		content := "---\ndepends_on:\n  - 01-setup\n---\n# File Plan\n\n### Task 1: T\n- [ ] x\n"
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test-plan.md")
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+		p, err := plan.ParsePlanFile(path)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"01-setup"}, p.DependsOn)
+		assert.Equal(t, "File Plan", p.Title)
+	})
+}

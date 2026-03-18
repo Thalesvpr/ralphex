@@ -149,6 +149,12 @@ func main() {
 	parser := flags.NewParser(&o, flags.Default)
 	parser.Usage = "[OPTIONS] [plan-file]"
 
+	if _, err := parser.AddCommand("orchestrate", "orchestrate plan execution",
+		"run multiple plans respecting dependency order", &orchestrateCmd{}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: add orchestrate command: %v\n", err)
+		os.Exit(1)
+	}
+
 	args, err := parser.Parse()
 	if err != nil {
 		var flagsErr *flags.Error
