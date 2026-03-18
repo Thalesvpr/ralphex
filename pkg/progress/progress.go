@@ -290,7 +290,7 @@ func (l *Logger) PrintSection(section status.Section) {
 func (l *Logger) getTerminalWidth() int {
 	const (
 		minWidth       = 40
-		prefixReserved = 22 // 20 for "[DD-MM-YY HH:MM:SS] " + 2 safety margin for list indent
+		prefixReserved = 22 // 20 for "[YY-MM-DD HH:MM:SS] " + 2 safety margin for list indent
 	)
 
 	// try COLUMNS env var first
@@ -335,6 +335,7 @@ func (l *Logger) wrapText(text string, width int) string {
 	var result strings.Builder
 	words := strings.Fields(trimmed)
 	lineLen := 0
+	currentWidth := effectiveWidth // first line uses reduced width for indent
 
 	if indent != "" {
 		result.WriteString(indent)
@@ -350,15 +351,16 @@ func (l *Logger) wrapText(text string, width int) string {
 		}
 
 		// check if word fits on current line
-		if lineLen+1+wordLen <= effectiveWidth {
+		if lineLen+1+wordLen <= currentWidth {
 			result.WriteString(" ")
 			result.WriteString(word)
 			lineLen += 1 + wordLen
 		} else {
-			// start new line; word gets its own line even if longer than width
+			// continuation lines use full width (no indent)
 			result.WriteString("\n")
 			result.WriteString(word)
 			lineLen = wordLen
+			currentWidth = width
 		}
 	}
 

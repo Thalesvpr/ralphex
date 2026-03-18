@@ -697,6 +697,12 @@ func TestWrapText(t *testing.T) {
 			width: 5,
 			want:  "          short",
 		},
+		{
+			name:  "continuation lines use full width",
+			text:  "    - aa bb cc dd ee ff",
+			width: 15,
+			want:  "    - aa bb cc\ndd ee ff",
+		},
 	}
 
 	l := &Logger{}
