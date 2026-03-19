@@ -146,6 +146,7 @@ max_parallel: 4           # max plans running simultaneously
 max_retries: 2            # retry failed plans up to N times
 retry_delay: 30s          # delay between retries
 fail_fast: false          # stop everything on first failure
+log_retention_days: 7     # delete logs older than N days (0 = keep forever)
 `, plansDir)
 }
 

@@ -80,10 +80,11 @@ type Orchestrator struct {
 	MaxRetries  int  // retry failed plans up to this many times (0 = no retry)
 	RetryDelay  time.Duration
 	FailFast    bool
-	DryRun      bool
-	RepoDir     string // repo directory for dependency checks; defaults to "."
-	Runner      PlanRunner
-	Log         Logger
+	DryRun           bool
+	LogRetentionDays int    // delete logs/progress older than N days (0 = disabled)
+	RepoDir          string // repo directory for dependency checks; defaults to "."
+	Runner           PlanRunner
+	Log              Logger
 }
 
 // Run executes the orchestration loop.
@@ -94,6 +95,13 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	if o.RepoDir == "" {
 		o.RepoDir = "."
 	}
+
+	// auto-cleanup before starting
+	Cleanup(CleanupConfig{
+		LogRetentionDays: o.LogRetentionDays,
+		PruneWorktrees:   true,
+		RepoDir:          o.RepoDir,
+	}, o.Log)
 	if o.MaxRetries < 0 {
 		o.MaxRetries = 0
 	}
@@ -298,6 +306,8 @@ func (o *Orchestrator) handleDone(ctx context.Context, doneCh chan planResult,
 			mu.Unlock()
 			o.Log.Printf("orchestrator: %s FAILED (all %d attempts exhausted): %v\n",
 				result.Name, o.MaxRetries+1, result.Err)
+			RecordProblem(o.RepoDir, result.Name, result.Err,
+				fmt.Sprintf("failed after %d attempts", o.MaxRetries+1))
 
 			if o.FailFast {
 				return fmt.Errorf("plan %s failed (fail-fast enabled): %w", result.Name, result.Err)

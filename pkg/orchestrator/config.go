@@ -13,10 +13,11 @@ type Config struct {
 	Source      string       `yaml:"source"`       // "plans" or "issues"
 	PlansDir   string       `yaml:"plans_dir"`     // path to plans directory
 	Issues     IssuesConfig `yaml:"issues"`        // GitHub issues config
-	MaxParallel int         `yaml:"max_parallel"`
-	MaxRetries  int         `yaml:"max_retries"`
-	RetryDelay  Duration    `yaml:"retry_delay"`
-	FailFast    bool        `yaml:"fail_fast"`
+	MaxParallel      int      `yaml:"max_parallel"`
+	MaxRetries       int      `yaml:"max_retries"`
+	RetryDelay       Duration `yaml:"retry_delay"`
+	FailFast         bool     `yaml:"fail_fast"`
+	LogRetentionDays int      `yaml:"log_retention_days"`
 }
 
 // IssuesConfig holds GitHub issues settings.
@@ -52,9 +53,10 @@ func LoadConfig(path string) (Config, error) {
 		Source:      "plans",
 		PlansDir:    "docs/plans",
 		MaxParallel: 4,
-		MaxRetries:  2,
-		RetryDelay:  Duration{30 * time.Second},
-		FailFast:    false,
+		MaxRetries:       2,
+		RetryDelay:       Duration{30 * time.Second},
+		FailFast:         false,
+		LogRetentionDays: 7,
 	}
 
 	data, err := os.ReadFile(path)
