@@ -155,6 +155,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if _, err := parser.AddCommand("investigate", "investigate codebase and create plans",
+		"analyze repo, create/refine issues and plans autonomously", &investigateCmd{}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: add investigate command: %v\n", err)
+		os.Exit(1)
+	}
+
 	if _, err := parser.AddCommand("orchestrate", "orchestrate plan execution",
 		"run multiple plans respecting dependency order", &orchestrateCmd{}); err != nil {
 		fmt.Fprintf(os.Stderr, "error: add orchestrate command: %v\n", err)
