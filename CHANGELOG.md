@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.24.2 - 2026-03-18
+
+### Fixed
+
+- Kill orphaned child processes on normal exit #227 @umputun
+
+## v0.24.1 - 2026-03-17
+
+### Fixed
+
+- Fix wrapText continuation lines using reduced width instead of full terminal width
+
+## v0.24.0 - 2026-03-17
+
+### New Features
+
+- Add session_timeout config option for hanging session safety net #225 @umputun
+
+### Fixed
+
+- Prevent infinite loop when checkboxes are outside Task sections #222 @romrigger
+- Fix progress output text wrapping and code smells #226 @umputun
+
 ## v0.23.0 - 2026-03-16
 
 ### New Features

@@ -161,6 +161,66 @@ Just some text, no checkboxes.
 		assert.Equal(t, "Inside task", p.Tasks[0].Checkboxes[0].Text)
 	})
 
+	t.Run("ignores checkboxes in Success criteria after Task sections", func(t *testing.T) {
+		content := `# Plan
+
+### Task 1: First
+
+- [x] done
+
+## Success criteria
+
+- [ ] Manual: run e2e test
+`
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+
+		require.Len(t, p.Tasks, 1)
+		assert.Equal(t, plan.TaskStatusDone, p.Tasks[0].Status)
+		require.Len(t, p.Tasks[0].Checkboxes, 1)
+		assert.Equal(t, "done", p.Tasks[0].Checkboxes[0].Text)
+	})
+
+	t.Run("closes task on # Overview when title already set", func(t *testing.T) {
+		content := `# Plan
+
+### Task 1: First
+
+- [x] done
+
+# Overview
+
+- [ ] Manual: verify
+`
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+
+		require.Len(t, p.Tasks, 1)
+		assert.Equal(t, plan.TaskStatusDone, p.Tasks[0].Status)
+		require.Len(t, p.Tasks[0].Checkboxes, 1)
+		assert.Equal(t, "done", p.Tasks[0].Checkboxes[0].Text)
+	})
+
+	t.Run("does not close task on #### subsection under task", func(t *testing.T) {
+		content := `# Plan
+
+### Task 1: First
+
+- [ ] main item
+
+#### Subsection
+
+- [ ] sub item
+`
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+
+		require.Len(t, p.Tasks, 1)
+		require.Len(t, p.Tasks[0].Checkboxes, 2)
+		assert.Equal(t, "main item", p.Tasks[0].Checkboxes[0].Text)
+		assert.Equal(t, "sub item", p.Tasks[0].Checkboxes[1].Text)
+	})
+
 	t.Run("parses non-integer task headers", func(t *testing.T) {
 		content := `# Plan with inserted tasks
 
@@ -234,6 +294,57 @@ Just some text, no checkboxes.
 		assert.Equal(t, 2, p.Tasks[1].Number)
 		assert.Equal(t, 3, p.Tasks[2].Number)
 	})
+
+	t.Run("parses indented checkboxes as sub-items", func(t *testing.T) {
+		content := `# Plan
+
+### Task 1: Add tests
+
+- [ ] Add comprehensive tests
+  - [ ] Unit tests for handler
+  - [ ] Integration tests
+`
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+
+		require.Len(t, p.Tasks, 1)
+		require.Len(t, p.Tasks[0].Checkboxes, 3)
+		assert.Equal(t, "Add comprehensive tests", p.Tasks[0].Checkboxes[0].Text)
+		assert.Equal(t, "Unit tests for handler", p.Tasks[0].Checkboxes[1].Text)
+		assert.Equal(t, "Integration tests", p.Tasks[0].Checkboxes[2].Text)
+	})
+
+	t.Run("HasUncompletedActionableWork ignores description checkboxes", func(t *testing.T) {
+		content := `# Plan
+
+### Task 1: Format example
+
+- [x] Faulti format
+- [ ] use this format for [ ] unchecked items
+`
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+
+		require.Len(t, p.Tasks, 1)
+		require.Len(t, p.Tasks[0].Checkboxes, 2)
+		// first actionable (done), second is description (text contains [ ]) — no actionable uncompleted
+		assert.False(t, p.Tasks[0].HasUncompletedActionableWork())
+	})
+
+	t.Run("HasUncompletedActionableWork returns true when actionable unchecked", func(t *testing.T) {
+		content := `# Plan
+
+### Task 1: Mixed
+
+- [ ] Create HashPassword
+- [ ] use [ ] for format example
+`
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+
+		require.Len(t, p.Tasks, 1)
+		assert.True(t, p.Tasks[0].HasUncompletedActionableWork())
+	})
 }
 
 func TestParsePlanFile(t *testing.T) {
@@ -258,6 +369,44 @@ func TestParsePlanFile(t *testing.T) {
 	t.Run("returns error for missing file", func(t *testing.T) {
 		_, err := plan.ParsePlanFile("/nonexistent/file.md")
 		assert.Error(t, err)
+	})
+}
+
+func TestFileHasUncompletedCheckbox(t *testing.T) {
+	t.Run("returns true when file has uncompleted checkbox", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "plan.md")
+		require.NoError(t, os.WriteFile(path, []byte("# Plan\n- [ ] todo\n- [x] done"), 0o600))
+
+		has, err := plan.FileHasUncompletedCheckbox(path)
+		require.NoError(t, err)
+		assert.True(t, has)
+	})
+
+	t.Run("returns false when all checkboxes completed", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "plan.md")
+		require.NoError(t, os.WriteFile(path, []byte("# Plan\n- [x] done"), 0o600))
+
+		has, err := plan.FileHasUncompletedCheckbox(path)
+		require.NoError(t, err)
+		assert.False(t, has)
+	})
+
+	t.Run("returns error for missing file", func(t *testing.T) {
+		_, err := plan.FileHasUncompletedCheckbox("/nonexistent/file.md")
+		assert.Error(t, err)
+	})
+
+	t.Run("returns false when only format-description checkboxes unchecked", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "plan.md")
+		content := "# Plan\n- [ ] use this format for [ ] unchecked items\n- [ ] example with [x] in text"
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+		has, err := plan.FileHasUncompletedCheckbox(path)
+		require.NoError(t, err)
+		assert.False(t, has)
 	})
 }
 
@@ -316,4 +465,56 @@ func TestTaskStatus_Constants(t *testing.T) {
 	assert.Equal(t, plan.TaskStatusActive, plan.TaskStatus("active"))
 	assert.Equal(t, plan.TaskStatusDone, plan.TaskStatus("done"))
 	assert.Equal(t, plan.TaskStatusFailed, plan.TaskStatus("failed"))
+}
+
+func TestParsePlan_Frontmatter(t *testing.T) {
+	t.Run("parses depends_on from frontmatter", func(t *testing.T) {
+		content := "---\ndepends_on:\n  - 01-first\n  - 02-second\n---\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"01-first", "02-second"}, p.DependsOn)
+		assert.Equal(t, "Plan", p.Title)
+		require.Len(t, p.Tasks, 1)
+	})
+
+	t.Run("no frontmatter returns nil DependsOn", func(t *testing.T) {
+		content := "# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Nil(t, p.DependsOn)
+	})
+
+	t.Run("malformed frontmatter treated as no frontmatter", func(t *testing.T) {
+		content := "---\n: invalid yaml [\n---\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Nil(t, p.DependsOn)
+		// title parsed from original content (frontmatter delimiters become part of content)
+	})
+
+	t.Run("empty depends_on returns nil", func(t *testing.T) {
+		content := "---\ndepends_on: []\n---\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Empty(t, p.DependsOn)
+	})
+
+	t.Run("frontmatter with unclosed delimiter", func(t *testing.T) {
+		content := "---\ndepends_on:\n  - first\n# Plan\n\n### Task 1: T\n- [ ] x\n"
+		p, err := plan.ParsePlan(content)
+		require.NoError(t, err)
+		assert.Nil(t, p.DependsOn) // no closing ---
+	})
+
+	t.Run("ParsePlanFile with frontmatter", func(t *testing.T) {
+		content := "---\ndepends_on:\n  - 01-setup\n---\n# File Plan\n\n### Task 1: T\n- [ ] x\n"
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "test-plan.md")
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+		p, err := plan.ParsePlanFile(path)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"01-setup"}, p.DependsOn)
+		assert.Equal(t, "File Plan", p.Title)
+	})
 }

@@ -252,6 +252,40 @@ func TestLogger_PrintAligned(t *testing.T) {
 	assert.True(t, strings.HasSuffix(output, "\n"), "output should end with newline")
 }
 
+func TestLogger_PrintAligned_WrapsLongListItem(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	require.NoError(t, os.Chdir(tmpDir))
+	defer func() { _ = os.Chdir(origDir) }()
+
+	holder := &status.PhaseHolder{}
+	l, err := NewLogger(Config{Mode: "full", Branch: "test", NoColor: true}, testColors(), holder)
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	var buf bytes.Buffer
+	l.stdout = &buf
+	t.Setenv("COLUMNS", "50") // narrow terminal to force wrapping
+
+	// long list item that should wrap, indent preserved on first line
+	l.PrintAligned("- this is a very long list item that should be wrapped properly")
+
+	content, err := os.ReadFile(l.Path())
+	require.NoError(t, err)
+	fileStr := string(content)
+	// first line should have the indent preserved
+	assert.Contains(t, fileStr, "]   - this is a very long list")
+	// continuation should be on a new line
+	lines := strings.Split(fileStr, "\n")
+	var contentLines []string
+	for _, line := range lines {
+		if strings.Contains(line, "- this") || strings.Contains(line, "wrapped") {
+			contentLines = append(contentLines, line)
+		}
+	}
+	assert.Greater(t, len(contentLines), 1, "long list item should be wrapped into multiple lines")
+}
+
 func TestLogger_PrintAligned_Empty(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -622,7 +656,7 @@ func TestWrapText(t *testing.T) {
 			want:  "this is a longer\ntext that needs\nwrapping",
 		},
 		{
-			name:  "single long word",
+			name:  "single long word stays on own line",
 			text:  "superlongwordthatcannotbewrapped",
 			width: 10,
 			want:  "superlongwordthatcannotbewrapped",
@@ -645,34 +679,60 @@ func TestWrapText(t *testing.T) {
 			width: 9,
 			want:  "exact fit",
 		},
+		{
+			name:  "preserves leading whitespace",
+			text:  "  1. indented list item text here",
+			width: 20,
+			want:  "  1. indented list\nitem text here",
+		},
+		{
+			name:  "preserves tab indent",
+			text:  "\tindented text that wraps",
+			width: 15,
+			want:  "\tindented text\nthat wraps",
+		},
+		{
+			name:  "indent wider than width returns original",
+			text:  "          short",
+			width: 5,
+			want:  "          short",
+		},
+		{
+			name:  "continuation lines use full width",
+			text:  "    - aa bb cc dd ee ff",
+			width: 15,
+			want:  "    - aa bb cc\ndd ee ff",
+		},
 	}
 
+	l := &Logger{}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := wrapText(tc.text, tc.width)
+			got := l.wrapText(tc.text, tc.width)
 			assert.Equal(t, tc.want, got)
 		})
 	}
 }
 
 func TestGetTerminalWidth(t *testing.T) {
+	l := &Logger{}
 	// test with COLUMNS env var
 	t.Run("uses COLUMNS env var", func(t *testing.T) {
 		t.Setenv("COLUMNS", "100")
-		width := getTerminalWidth()
-		// should return 100 - 20 = 80
-		assert.Equal(t, 80, width)
+		width := l.getTerminalWidth()
+		// should return 100 - 22 = 78 (20 for timestamp prefix + 2 safety margin)
+		assert.Equal(t, 78, width)
 	})
 
 	t.Run("respects min width", func(t *testing.T) {
-		t.Setenv("COLUMNS", "50") // 50 - 20 = 30, but min is 40
-		width := getTerminalWidth()
+		t.Setenv("COLUMNS", "50") // 50 - 22 = 28, but min is 40
+		width := l.getTerminalWidth()
 		assert.Equal(t, 40, width)
 	})
 
 	t.Run("invalid COLUMNS", func(t *testing.T) {
 		t.Setenv("COLUMNS", "invalid")
-		width := getTerminalWidth()
+		width := l.getTerminalWidth()
 		// should fall back to default or syscall result
 		assert.Positive(t, width)
 	})
@@ -695,9 +755,10 @@ func TestExtractSignal(t *testing.T) {
 		{"empty", "", ""},
 	}
 
+	l := &Logger{}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractSignal(tc.input)
+			got := l.extractSignal(tc.input)
 			assert.Equal(t, tc.want, got)
 		})
 	}
@@ -721,9 +782,10 @@ func TestIsListItem(t *testing.T) {
 		{"  - already indented", false}, // has leading space, won't match
 	}
 
+	l := &Logger{}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			got := isListItem(tc.input)
+			got := l.isListItem(tc.input)
 			assert.Equal(t, tc.want, got)
 		})
 	}
@@ -743,9 +805,10 @@ func TestFormatListItem(t *testing.T) {
 		{"double digit", "12. item", "  12. item"},
 	}
 
+	l := &Logger{}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := formatListItem(tc.input)
+			got := l.formatListItem(tc.input)
 			assert.Equal(t, tc.want, got)
 		})
 	}
