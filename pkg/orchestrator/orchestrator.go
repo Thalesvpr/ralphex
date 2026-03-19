@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,7 +38,7 @@ func FindReady(graph map[string]*GraphNode, completed, running map[string]bool) 
 		}
 		allSatisfied := true
 		for _, dep := range node.DependsOn {
-			if !completed[dep] {
+			if !depSatisfied(dep, completed) {
 				allSatisfied = false
 				break
 			}
@@ -49,6 +50,29 @@ func FindReady(graph map[string]*GraphNode, completed, running map[string]bool) 
 	// sort for deterministic order
 	sort.Slice(ready, func(i, j int) bool { return ready[i].Name < ready[j].Name })
 	return ready
+}
+
+// depSatisfied checks if a dependency is satisfied using fuzzy matching.
+// matches exact name, prefix match (dep is prefix of completed plan name),
+// or normalized match (strip numeric prefix from both).
+func depSatisfied(dep string, completed map[string]bool) bool {
+	if completed[dep] {
+		return true
+	}
+
+	depNorm := normalizeDep(dep)
+	for name := range completed {
+		// prefix match: "01-setup-rust-project" matches "01-setup-rust-project-structure"
+		if strings.HasPrefix(name, dep) {
+			return true
+		}
+		// normalized prefix: "setup-rust-project" matches "setup-rust-project-structure"
+		nameNorm := normalizeDep(name)
+		if strings.HasPrefix(nameNorm, depNorm) {
+			return true
+		}
+	}
+	return false
 }
 
 // Logger is used for orchestrator output.
