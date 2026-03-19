@@ -58,6 +58,15 @@ func (cmd *initCmd) Execute(args []string) error {
 	}
 
 	if cmd.Orchestrate {
+		// create orchestration config if not exists
+		configPath := filepath.Join(cwd, ".ralphex", "orchestrate.yml")
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			if writeErr := os.WriteFile(configPath, []byte(orchestrateConfigTemplate(cmd.PlansDir)), 0o644); writeErr != nil {
+				return fmt.Errorf("create orchestrate.yml: %w", writeErr)
+			}
+			fmt.Println("  created .ralphex/orchestrate.yml")
+		}
+
 		fmt.Printf("\norchestration enabled. add plans to %s/\n", cmd.PlansDir)
 		fmt.Println("run: ralphex orchestrate --plans-dir", cmd.PlansDir)
 	}
@@ -113,6 +122,31 @@ Run all plans: ralphex orchestrate --plans-dir %s
 	}
 
 	return sb.String()
+}
+
+// orchestrateConfigTemplate generates the orchestration config YAML.
+func orchestrateConfigTemplate(plansDir string) string {
+	return fmt.Sprintf(`# Ralphex orchestration config
+# This file controls how ralphex orchestrate behaves in this project.
+
+# Where plans come from
+source: plans  # "plans" = local markdown files, "issues" = GitHub issues
+
+# Local plans config (when source: plans)
+plans_dir: %s
+
+# GitHub issues config (when source: issues)
+# issues:
+#   label: ralphex        # only issues with this label
+#   auto_plan: true       # generate plan .md from issue before executing
+#   repo: owner/repo      # defaults to current git remote
+
+# Execution settings
+max_parallel: 4           # max plans running simultaneously
+max_retries: 2            # retry failed plans up to N times
+retry_delay: 30s          # delay between retries
+fail_fast: false          # stop everything on first failure
+`, plansDir)
 }
 
 // ensureGitignoreEntries adds ralphex entries to .gitignore if missing.
