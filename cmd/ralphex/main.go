@@ -164,6 +164,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// subcommand was executed via Commander.Execute() during Parse().
+	// if we reach here with an active command, Execute() succeeded — exit cleanly.
+	if parser.Active != nil {
+		os.Exit(0)
+	}
+
 	if o.Version {
 		os.Exit(0)
 	}
