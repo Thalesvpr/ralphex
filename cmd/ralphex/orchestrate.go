@@ -6,16 +6,19 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/umputun/ralphex/pkg/orchestrator"
 )
 
 // orchestrateCmd holds options for the orchestrate subcommand.
 type orchestrateCmd struct {
-	PlansDir    string `long:"plans-dir" default:"docs/plans" description:"directory containing plan files"`
-	MaxParallel int    `long:"max-parallel" default:"4" description:"maximum number of plans to run in parallel"`
-	FailFast    bool   `long:"fail-fast" description:"stop on first plan failure"`
-	DryRun      bool   `long:"dry-run" description:"show execution order without running"`
+	PlansDir    string        `long:"plans-dir" default:"docs/plans" description:"directory containing plan files"`
+	MaxParallel int           `long:"max-parallel" default:"4" description:"maximum number of plans to run in parallel"`
+	MaxRetries  int           `long:"max-retries" default:"2" description:"retry failed plans up to N times"`
+	RetryDelay  time.Duration `long:"retry-delay" default:"30s" description:"delay between retries"`
+	FailFast    bool          `long:"fail-fast" description:"stop on first plan failure"`
+	DryRun      bool          `long:"dry-run" description:"show execution order without running"`
 }
 
 // Execute runs the orchestrate subcommand.
@@ -26,6 +29,8 @@ func (cmd *orchestrateCmd) Execute(args []string) error {
 	o := &orchestrator.Orchestrator{
 		PlansDir:    cmd.PlansDir,
 		MaxParallel: cmd.MaxParallel,
+		MaxRetries:  cmd.MaxRetries,
+		RetryDelay:  cmd.RetryDelay,
 		FailFast:    cmd.FailFast,
 		DryRun:      cmd.DryRun,
 	}

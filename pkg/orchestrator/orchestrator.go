@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 )
 
 // GraphNode represents a plan in the dependency graph.
@@ -66,10 +67,18 @@ func (stdLogger) Printf(format string, args ...any) {
 // it receives the plan file path and should block until completion.
 type PlanRunner func(ctx context.Context, planFile string) error
 
+// planResult is sent over the done channel when a plan finishes.
+type planResult struct {
+	Name string
+	Err  error
+}
+
 // Orchestrator coordinates parallel plan execution respecting dependencies.
 type Orchestrator struct {
 	PlansDir    string
 	MaxParallel int
+	MaxRetries  int  // retry failed plans up to this many times (0 = no retry)
+	RetryDelay  time.Duration
 	FailFast    bool
 	DryRun      bool
 	RepoDir     string // repo directory for dependency checks; defaults to "."
@@ -85,6 +94,12 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	if o.RepoDir == "" {
 		o.RepoDir = "."
 	}
+	if o.MaxRetries < 0 {
+		o.MaxRetries = 0
+	}
+	if o.RetryDelay == 0 {
+		o.RetryDelay = 30 * time.Second
+	}
 
 	entries, err := LoadPlanFiles(o.PlansDir)
 	if err != nil {
@@ -98,7 +113,8 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	graph := BuildGraph(entries)
 
 	o.Log.Printf("orchestrator: %d plans loaded\n", len(graph))
-	for name, node := range graph {
+	for _, name := range sortedKeys(graph) {
+		node := graph[name]
 		if len(node.DependsOn) > 0 {
 			o.Log.Printf("  %s depends on: %v\n", name, node.DependsOn)
 		} else {
@@ -144,47 +160,51 @@ func (o *Orchestrator) execute(ctx context.Context, graph map[string]*GraphNode)
 	completed := make(map[string]bool)
 	running := make(map[string]bool)
 	failed := make(map[string]error)
+	retries := make(map[string]int)
 	var mu sync.Mutex
 
 	sem := make(chan struct{}, o.MaxParallel)
-	doneCh := make(chan string, len(graph))
+	doneCh := make(chan planResult, len(graph))
+
+	totalPlans := len(graph)
 
 	for {
 		mu.Lock()
-		if len(completed)+len(failed) >= len(graph) {
-			mu.Unlock()
+		doneCount := len(completed) + len(failed)
+		mu.Unlock()
+
+		if doneCount >= totalPlans {
 			break
 		}
 
+		mu.Lock()
 		ready := FindReady(graph, completed, running)
 		mu.Unlock()
 
 		if len(ready) == 0 {
-			// nothing ready — either everything is running or there's a deadlock
 			mu.Lock()
 			runningCount := len(running)
 			mu.Unlock()
 
 			if runningCount == 0 {
+				// check if all remaining are failed (not deadlock)
+				mu.Lock()
+				remainingFailed := len(failed)
+				mu.Unlock()
+				if remainingFailed > 0 {
+					break // all remaining plans depend on failed ones
+				}
 				return fmt.Errorf("deadlock: circular dependency detected")
 			}
 
 			// wait for a running plan to finish
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case name := <-doneCh:
-				mu.Lock()
-				delete(running, name)
-				if o.FailFast && len(failed) > 0 {
-					mu.Unlock()
-					return fmt.Errorf("plan %s failed (fail-fast enabled)", name)
-				}
-				mu.Unlock()
-				continue
+			if err := o.handleDone(ctx, doneCh, &mu, completed, running, failed, retries, graph, sem); err != nil {
+				return err
 			}
+			continue
 		}
 
+		// launch ready plans
 		for _, entry := range ready {
 			select {
 			case sem <- struct{}{}:
@@ -196,56 +216,108 @@ func (o *Orchestrator) execute(ctx context.Context, graph map[string]*GraphNode)
 			if o.FailFast && len(failed) > 0 {
 				mu.Unlock()
 				<-sem
-				return fmt.Errorf("fail-fast: stopping due to previous failure")
+				break
 			}
 			running[entry.Name] = true
 			mu.Unlock()
 
 			go func(e PlanEntry) {
-				defer func() {
-					<-sem
-					doneCh <- e.Name
-				}()
+				defer func() { <-sem }()
 
 				o.Log.Printf("orchestrator: starting %s\n", e.Name)
-				if runErr := o.Runner(ctx, e.Path); runErr != nil {
-					mu.Lock()
-					failed[e.Name] = runErr
-					mu.Unlock()
-					o.Log.Printf("orchestrator: %s FAILED: %v\n", e.Name, runErr)
-					return
-				}
-
-				mu.Lock()
-				completed[e.Name] = true
-				mu.Unlock()
-				o.Log.Printf("orchestrator: %s completed\n", e.Name)
+				runErr := o.Runner(ctx, e.Path)
+				doneCh <- planResult{Name: e.Name, Err: runErr}
 			}(entry)
 		}
 
 		// wait for at least one to finish before re-checking
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case name := <-doneCh:
-			mu.Lock()
-			delete(running, name)
-			if o.FailFast && len(failed) > 0 {
-				mu.Unlock()
-				return fmt.Errorf("plan %s failed (fail-fast enabled)", name)
-			}
-			mu.Unlock()
+		if err := o.handleDone(ctx, doneCh, &mu, completed, running, failed, retries, graph, sem); err != nil {
+			return err
 		}
 	}
 
 	if len(failed) > 0 {
 		var msg string
-		for name, err := range failed {
-			msg += fmt.Sprintf("\n  %s: %v", name, err)
+		for name, ferr := range failed {
+			msg += fmt.Sprintf("\n  %s: %v", name, ferr)
 		}
 		return fmt.Errorf("%d plan(s) failed:%s", len(failed), msg)
 	}
 
 	o.Log.Printf("orchestrator: all %d plans completed successfully\n", len(completed))
 	return nil
+}
+
+// handleDone processes one completion from the done channel.
+func (o *Orchestrator) handleDone(ctx context.Context, doneCh chan planResult,
+	mu *sync.Mutex, completed, running map[string]bool, failed map[string]error,
+	retries map[string]int, graph map[string]*GraphNode, sem chan struct{}) error {
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case result := <-doneCh:
+		mu.Lock()
+		delete(running, result.Name)
+
+		if result.Err != nil {
+			attempt := retries[result.Name]
+			if attempt < o.MaxRetries {
+				retries[result.Name] = attempt + 1
+				mu.Unlock()
+
+				o.Log.Printf("orchestrator: %s FAILED (attempt %d/%d): %v — retrying in %s\n",
+					result.Name, attempt+1, o.MaxRetries+1, result.Err, o.RetryDelay)
+
+				// retry after delay
+				go func(name string) {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(o.RetryDelay):
+					}
+
+					sem <- struct{}{}
+
+					mu.Lock()
+					entry := graph[name].Entry
+					running[name] = true
+					mu.Unlock()
+
+					defer func() { <-sem }()
+
+					o.Log.Printf("orchestrator: retrying %s\n", name)
+					runErr := o.Runner(ctx, entry.Path)
+					doneCh <- planResult{Name: name, Err: runErr}
+				}(result.Name)
+
+				return nil
+			}
+
+			failed[result.Name] = result.Err
+			mu.Unlock()
+			o.Log.Printf("orchestrator: %s FAILED (all %d attempts exhausted): %v\n",
+				result.Name, o.MaxRetries+1, result.Err)
+
+			if o.FailFast {
+				return fmt.Errorf("plan %s failed (fail-fast enabled): %w", result.Name, result.Err)
+			}
+			return nil
+		}
+
+		completed[result.Name] = true
+		mu.Unlock()
+		o.Log.Printf("orchestrator: %s completed\n", result.Name)
+		return nil
+	}
+}
+
+// sortedKeys returns map keys in sorted order.
+func sortedKeys(m map[string]*GraphNode) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
